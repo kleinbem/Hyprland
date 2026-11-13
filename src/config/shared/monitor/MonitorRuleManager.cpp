@@ -186,6 +186,13 @@ void CMonitorRuleManager::ensureMonitorStatus() {
             m->m_activeMonitorRule.m_disabled ? m->onDisconnect() : m->onConnect(true);
     }
 
+    // a rule's vrr only takes effect through ensureVRR, which a config reload runs
+    // before this deferred apply has updated the active rule
+    for (const auto& m : monsForRefresh) {
+        if (m->m_output && m->m_enabled)
+            ensureVRR(m);
+    }
+
     for (auto const& w : Desktop::windowState()->windows()) {
         w->updateSurfaceScaleTransformDetails();
     }
