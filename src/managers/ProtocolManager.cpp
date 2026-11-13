@@ -89,11 +89,9 @@
 // * otherwise Hyprland might crash when exiting.                                             *
 // ********************************************************************************************
 
-// Retire the old wl_output global for `name` before a new one takes its map slot.
-// It must NOT be destroyed while clients still hold resources bound to it: destroying
-// them server-side makes each client's in-flight wl_output.release an "invalid object"
-// protocol error, fatally disconnecting every bound client (mass client kill on a fast
-// monitor unplug/replug, e.g. a power blip on an external screen).
+// Keep the retired global alive until bound clients release their resources and the
+// removal grace timer expires, so in-flight wl_output.release or wl_registry.bind calls
+// do not fatally disconnect clients on a fast unplug/replug.
 static void retireOutputGlobal(const std::string& name) {
     if (!PROTO::outputs.contains(name))
         return;
@@ -104,8 +102,7 @@ static void retireOutputGlobal(const std::string& name) {
     if (!old->isDefunct())
         old->remove();
 
-    if (old->hasBoundResources())
-        PROTO::defunctOutputs.emplace_back(old);
+    PROTO::defunctOutputs.emplace_back(old);
 }
 
 void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
@@ -353,6 +350,11 @@ bool CProtocolManager::isGlobalPrivileged(const wl_global* global) {
         return false;
 
     for (auto& [k, v] : PROTO::outputs) {
+        if (global == v->getGlobal())
+            return false;
+    }
+
+    for (auto const& v : PROTO::defunctOutputs) {
         if (global == v->getGlobal())
             return false;
     }

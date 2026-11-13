@@ -7,6 +7,7 @@
 #include "../../helpers/signal/Signal.hpp"
 
 class CWLOutputProtocol;
+class CEventLoopTimer;
 
 class CWLOutputResource {
   public:
@@ -32,6 +33,7 @@ class CWLOutputResource {
 class CWLOutputProtocol : public IWaylandProtocol {
   public:
     CWLOutputProtocol(const wl_interface* iface, const int& ver, const std::string& name, PHLMONITOR pMonitor);
+    virtual ~CWLOutputProtocol();
 
     virtual void                       bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id);
 
@@ -41,7 +43,7 @@ class CWLOutputProtocol : public IWaylandProtocol {
     PHLMONITORREF                      m_monitor;
     WP<CWLOutputProtocol>              m_self;
 
-    // will mark the protocol for removal, will be removed when no. of bound outputs is 0 (or when overwritten by a new global)
+    // will mark the protocol for removal, will be removed when no. of bound outputs is 0 and clients have had time to stop binding it
     void remove();
     bool isDefunct();         // true if above was called
     bool hasBoundResources(); // true if any client still holds a wl_output resource of ours
@@ -52,11 +54,13 @@ class CWLOutputProtocol : public IWaylandProtocol {
 
   private:
     void destroyResource(CWLOutputResource* resource);
+    void dropIfUnused();
 
     //
     std::vector<SP<CWLOutputResource>> m_outputs;
     bool                               m_defunct = false;
     std::string                        m_name    = "";
+    SP<CEventLoopTimer>                m_removeTimer; // set while removed clients may still be binding us
 
     struct {
         CHyprSignalListener modeChanged;
@@ -70,6 +74,6 @@ namespace PROTO {
     // defunct globals that are gone but not yet unref'd by all clients. Destroying their
     // still-bound resources server-side would fatally error the clients ("invalid object"
     // on their in-flight wl_output.release); they are kept here until every client has
-    // released, then drop out via destroyResource.
+    // released and the removal grace period is over, then drop out via dropIfUnused.
     inline std::vector<SP<CWLOutputProtocol>> defunctOutputs;
 };
