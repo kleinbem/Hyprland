@@ -2,6 +2,7 @@
 #include "Compositor.hpp"
 #include "../../Compositor.hpp"
 #include "../../output/Monitor.hpp"
+#include "../../managers/eventLoop/EventLoopManager.hpp"
 
 CWLOutputResource::CWLOutputResource(SP<CWlOutput> resource_, PHLMONITOR pMonitor, WP<CWLOutputProtocol> owner) : m_monitor(pMonitor), m_owner(owner), m_resource(resource_) {
     if UNLIKELY (!good())
@@ -98,6 +99,11 @@ CWLOutputProtocol::CWLOutputProtocol(const wl_interface* iface, const int& ver, 
     });
 }
 
+CWLOutputProtocol::~CWLOutputProtocol() {
+    if (m_removeTimer && g_pEventLoopManager)
+        g_pEventLoopManager->removeTimer(m_removeTimer);
+}
+
 void CWLOutputProtocol::bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id) {
     const auto RESOURCE = m_outputs.emplace_back(makeShared<CWLOutputResource>(makeShared<CWlOutput>(client, ver, id), m_monitor.lock(), m_self));
 
@@ -118,15 +124,21 @@ void CWLOutputProtocol::bindManager(wl_client* client, void* data, uint32_t ver,
 void CWLOutputProtocol::destroyResource(CWLOutputResource* resource) {
     std::erase_if(m_outputs, [&](const auto& other) { return other.get() == resource; });
 
-    if (m_outputs.empty() && m_defunct) {
-        // only erase the map entry if it is actually us: a new global with the same name may
-        // have replaced us (monitor replug), in which case we live in defunctOutputs.
-        // NOTE: either erase drops the last ref to `this` — nothing may run after it.
-        if (PROTO::outputs.contains(m_name) && PROTO::outputs.at(m_name).get() == this)
-            PROTO::outputs.erase(m_name);
-        else
-            std::erase_if(PROTO::defunctOutputs, [this](const auto& other) { return other.get() == this; });
-    }
+    // NOTE: may drop the last ref to `this` — nothing may run after it.
+    dropIfUnused();
+}
+
+void CWLOutputProtocol::dropIfUnused() {
+    if (!m_outputs.empty() || !m_defunct || m_removeTimer)
+        return;
+
+    // only erase the map entry if it is actually us: a new global with the same name may
+    // have replaced us (monitor replug), in which case we live in defunctOutputs.
+    // NOTE: either erase drops the last ref to `this` — nothing may run after it.
+    if (PROTO::outputs.contains(m_name) && PROTO::outputs.at(m_name).get() == this)
+        PROTO::outputs.erase(m_name);
+    else
+        std::erase_if(PROTO::defunctOutputs, [this](const auto& other) { return other.get() == this; });
 }
 
 bool CWLOutputProtocol::hasBoundResources() {
@@ -152,6 +164,26 @@ void CWLOutputProtocol::remove() {
 
     m_defunct = true;
     removeGlobal();
+
+    // wl_global_remove only tells clients the global is going away. One that has not read
+    // that yet can still be binding it, and binding a destroyed global is a protocol error
+    // that fatally disconnects the client. Every client binds a new wl_output as soon as it
+    // is announced, so a monitor that comes and goes within a roundtrip (a flapping connector
+    // or a quick replug) would take every client down. Keep the global alive long enough for
+    // those binds to land, as wlroots does.
+    m_removeTimer = makeShared<CEventLoopTimer>(
+        std::chrono::seconds(5),
+        [self = m_self](SP<CEventLoopTimer> timer, void* data) {
+            const auto PSELF = self.lock();
+            if (!PSELF)
+                return;
+
+            g_pEventLoopManager->removeTimer(timer);
+            PSELF->m_removeTimer.reset();
+            PSELF->dropIfUnused();
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(m_removeTimer);
 }
 
 bool CWLOutputProtocol::isDefunct() {

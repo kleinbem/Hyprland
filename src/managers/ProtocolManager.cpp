@@ -94,6 +94,8 @@
 // them server-side makes each client's in-flight wl_output.release an "invalid object"
 // protocol error, fatally disconnecting every bound client (mass client kill on a fast
 // monitor unplug/replug, e.g. a power blip on an external screen).
+// Nor may it be destroyed while clients can still be binding it, even with nothing bound
+// yet: see CWLOutputProtocol::remove(). The old global drops out on its own once both hold.
 static void retireOutputGlobal(const std::string& name) {
     if (!PROTO::outputs.contains(name))
         return;
@@ -104,8 +106,7 @@ static void retireOutputGlobal(const std::string& name) {
     if (!old->isDefunct())
         old->remove();
 
-    if (old->hasBoundResources())
-        PROTO::defunctOutputs.emplace_back(old);
+    PROTO::defunctOutputs.emplace_back(old);
 }
 
 void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
