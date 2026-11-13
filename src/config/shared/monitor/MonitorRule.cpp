@@ -26,8 +26,9 @@ eMonitorRuleComparisonResult CMonitorRule::compare(const CMonitorRule& other) co
     const auto SAME_AUTO_DIR  = m_autoDir == other.m_autoDir;
     const auto SAME_RESERVED  = m_reservedArea == other.m_reservedArea;
     const auto SAME_MIRROR    = m_mirrorOf == other.m_mirrorOf;
+    const auto SAME_VRR       = m_vrr == other.m_vrr;
 
-    if (!SAME_CM || !SAME_POS || !SAME_TRANSFORM || !SAME_AUTO_DIR || !SAME_RESERVED || !SAME_MIRROR)
+    if (!SAME_CM || !SAME_POS || !SAME_TRANSFORM || !SAME_AUTO_DIR || !SAME_RESERVED || !SAME_MIRROR || !SAME_VRR)
         return COMPARISON_SOFT_MISMATCH;
 
     return COMPARISON_FULL_MATCH;
